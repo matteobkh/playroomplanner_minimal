@@ -98,7 +98,7 @@ $isResponsabile = $user && $user['ruolo'] === 'responsabile' && !empty($user['da
                         </div>
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Data e Ora Inizio</label>
-                            <input type="datetime-local" name="data_ora_inizio" class="form-control" required>
+                            <input type="datetime-local" name="data_ora_inizio" class="form-control" step="3600" required>
                         </div>
                     </div>
                     <div class="row">

@@ -36,12 +36,12 @@ Apri nel browser: http://localhost/playroomplanner/
 
 | Email | Password | Ruolo |
 |-------|----------|-------|
-| resp.musica@example.com | password123 | Responsabile |
-| resp.teatro@example.com | password123 | Responsabile |
-| resp.ballo@example.com | password123 | Responsabile |
-| allievo1@example.com | password123 | Allievo |
-| docente1@example.com | password123 | Docente |
-| tecnico1@example.com | password123 | Tecnico |
+| resp.musica@example.com | password | Responsabile |
+| resp.teatro@example.com | password | Responsabile |
+| resp.ballo@example.com | password | Responsabile |
+| allievo1@example.com | password | Allievo |
+| docente1@example.com | password | Docente |
+| tecnico1@example.com | password | Tecnico |
 
 ## Struttura del Progetto
 

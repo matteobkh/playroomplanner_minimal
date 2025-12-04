@@ -527,4 +527,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (salaFilter) {
         salaFilter.addEventListener('change', () => loadPrenotazioni(salaFilter.value || null));
     }
+    
+    // Forza minuti a 00 nel campo data/ora prenotazione
+    const dataOraInput = document.querySelector('input[name="data_ora_inizio"]');
+    if (dataOraInput) {
+        dataOraInput.addEventListener('change', function() {
+            if (this.value) {
+                // Rimuove i minuti impostando sempre :00
+                this.value = this.value.substring(0, 14) + '00';
+            }
+        });
+    }
 });
