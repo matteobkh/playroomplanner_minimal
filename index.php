@@ -12,7 +12,7 @@ $isResponsabile = $user && $user['ruolo'] === 'responsabile' && !empty($user['da
 <head>
     <?php require 'common/header.html'; ?>
 </head>
-<body>
+<body data-user-email="<?= htmlspecialchars($user['email'] ?? '') ?>">
     <?php require 'common/nav.php'; ?>
     
     <!-- Container messaggi -->
@@ -223,16 +223,44 @@ $isResponsabile = $user && $user['ruolo'] === 'responsabile' && !empty($user['da
                 </div>
                 <div class="modal-body">
                     <?php if ($user): ?>
-                    <table class="table">
-                        <tr><th>Nome</th><td><?= htmlspecialchars($user['nome']) ?></td></tr>
-                        <tr><th>Cognome</th><td><?= htmlspecialchars($user['cognome']) ?></td></tr>
-                        <tr><th>Email</th><td><?= htmlspecialchars($user['email']) ?></td></tr>
-                        <tr><th>Ruolo</th><td><span class="badge bg-secondary"><?= htmlspecialchars($user['ruolo']) ?></span></td></tr>
-                        <tr><th>Data Nascita</th><td><?= htmlspecialchars($user['data_nascita']) ?></td></tr>
+                    <form id="formModificaProfilo" onsubmit="salvaProfilo(event)">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Nome</label>
+                                <input type="text" name="nome" class="form-control" value="<?= htmlspecialchars($user['nome']) ?>" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Cognome</label>
+                                <input type="text" name="cognome" class="form-control" value="<?= htmlspecialchars($user['cognome']) ?>" required>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Email</label>
+                            <input type="email" class="form-control" value="<?= htmlspecialchars($user['email']) ?>" disabled>
+                            <small class="text-muted">L'email non può essere modificata</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Data di Nascita</label>
+                            <input type="date" name="data_nascita" class="form-control" value="<?= htmlspecialchars($user['data_nascita']) ?>" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Ruolo</label>
+                            <input type="text" class="form-control" value="<?= htmlspecialchars($user['ruolo']) ?>" disabled>
+                        </div>
                         <?php if ($isResponsabile): ?>
-                        <tr><th>Responsabile dal</th><td><?= htmlspecialchars($user['data_inizio_responsabile']) ?></td></tr>
+                        <div class="mb-3">
+                            <label class="form-label">Responsabile dal</label>
+                            <input type="text" class="form-control" value="<?= htmlspecialchars($user['data_inizio_responsabile']) ?>" disabled>
+                        </div>
                         <?php endif; ?>
-                    </table>
+                        <button type="submit" class="btn btn-primary w-100 mb-2">
+                            <i class="bi bi-check-lg"></i> Salva Modifiche
+                        </button>
+                    </form>
+                    <hr>
+                    <button type="button" class="btn btn-outline-danger w-100" onclick="cancellaProfilo()">
+                        <i class="bi bi-trash"></i> Cancella Account
+                    </button>
                     <?php endif; ?>
                 </div>
             </div>
@@ -255,6 +283,44 @@ $isResponsabile = $user && $user['ruolo'] === 'responsabile' && !empty($user['da
                     </div>
                     <button type="button" class="btn btn-danger w-100" onclick="confermaRifiuto()">
                         Conferma Rifiuto
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- MODAL MODIFICA PRENOTAZIONE -->
+    <div class="modal fade" id="modificaPrenotazioneModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil"></i> Modifica Prenotazione</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="modificaId">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Data e Ora Inizio</label>
+                            <input type="datetime-local" id="modificaDataOra" class="form-control" step="3600" required>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">Durata (ore)</label>
+                            <input type="number" id="modificaDurata" class="form-control" min="1" max="15" required>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <label class="form-label">Attività</label>
+                            <input type="text" id="modificaAttivita" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Invitati</label>
+                        <div id="modificaIscrittiCheckboxes" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                            <div class="loading"><div class="spinner-border spinner-border-sm"></div></div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary w-100" onclick="salvaModificaPrenotazione()">
+                        <i class="bi bi-check-lg"></i> Salva Modifiche
                     </button>
                 </div>
             </div>

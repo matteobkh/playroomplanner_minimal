@@ -157,6 +157,43 @@ function showProfilo() {
     modal.show();
 }
 
+/**
+ * Salva modifiche profilo
+ */
+async function salvaProfilo(event) {
+    event.preventDefault();
+    const form = event.target;
+    
+    try {
+        await fetchJSON('profilo', 'PUT', {
+            nome: form.nome.value,
+            cognome: form.cognome.value,
+            data_nascita: form.data_nascita.value
+        });
+        
+        showAlert('Profilo aggiornato con successo!');
+        setTimeout(() => location.reload(), 1000);
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+/**
+ * Cancella account
+ */
+async function cancellaProfilo() {
+    if (!confirm('Sei sicuro di voler cancellare il tuo account? Questa operazione è irreversibile.')) return;
+    if (!confirm('ATTENZIONE: Tutti i tuoi dati verranno eliminati. Confermi?')) return;
+    
+    try {
+        await fetchJSON('profilo', 'DELETE');
+        showAlert('Account cancellato');
+        setTimeout(() => location.reload(), 1000);
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
 /* ==================== PRENOTAZIONI ==================== */
 
 let currentWeek = new Date();
@@ -175,6 +212,9 @@ async function loadPrenotazioni(salaId = null) {
         if (salaId) params.sala_id = salaId;
         
         const result = await fetchJSON('prenotazioni', 'GET', params);
+        
+        // Salva nella cache per modifica/cancella
+        prenotazioniCache = result.prenotazioni;
         
         // Aggiorna display settimana
         const weekDisplay = document.getElementById('weekDisplay');
@@ -200,14 +240,28 @@ function renderPrenotazioni(prenotazioni, container) {
         return;
     }
     
+    // Ottieni email utente loggato (se presente)
+    const userEmail = document.body.dataset.userEmail || '';
+    
     let html = '<div class="row">';
     prenotazioni.forEach(p => {
+        const isOwner = userEmail && p.responsabile_email === userEmail;
         const fine = new Date(new Date(p.data_ora_inizio).getTime() + p.durata * 3600000);
         html += `
             <div class="col-md-6 col-lg-4 mb-3">
                 <div class="card prenotazione-card h-100">
-                    <div class="card-header bg-primary text-white">
-                        <strong>${p.nome_sala}</strong> - ${p.nome_settore}
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <span><strong>${p.nome_sala}</strong> - ${p.nome_settore}</span>
+                        ${isOwner ? `
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-light btn-sm" onclick="showModificaPrenotazione(${p.id})" title="Modifica">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="cancellaPrenotazione(${p.id})" title="Cancella">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                        ` : ''}
                     </div>
                     <div class="card-body">
                         <h6 class="card-title">${p.attivita}</h6>
@@ -432,6 +486,109 @@ function changeImpegniWeek(delta) {
 
 /* ==================== NUOVA PRENOTAZIONE ==================== */
 
+// Variabile globale per memorizzare le prenotazioni caricate
+let prenotazioniCache = [];
+
+/**
+ * Cancella una prenotazione
+ */
+async function cancellaPrenotazione(id) {
+    if (!confirm('Sei sicuro di voler cancellare questa prenotazione?')) return;
+    
+    try {
+        await fetchJSON('prenotazioni&id=' + id, 'DELETE');
+        showAlert('Prenotazione cancellata con successo!');
+        loadPrenotazioni();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
+/**
+ * Mostra modal per modificare una prenotazione
+ */
+async function showModificaPrenotazione(id) {
+    const prenotazione = prenotazioniCache.find(p => p.id == id);
+    if (!prenotazione) {
+        showAlert('Prenotazione non trovata', 'danger');
+        return;
+    }
+    
+    // Popola il form di modifica
+    document.getElementById('modificaId').value = prenotazione.id;
+    document.getElementById('modificaDataOra').value = prenotazione.data_ora_inizio.replace(' ', 'T').substring(0, 16);
+    document.getElementById('modificaDurata').value = prenotazione.durata;
+    document.getElementById('modificaAttivita').value = prenotazione.attivita;
+    
+    // Carica lista iscritti con invitati selezionati
+    await loadIscrittiPerModifica(id);
+    
+    new bootstrap.Modal(document.getElementById('modificaPrenotazioneModal')).show();
+}
+
+/**
+ * Carica iscritti per il modal di modifica con gli invitati già selezionati
+ */
+async function loadIscrittiPerModifica(prenotazioneId) {
+    const container = document.getElementById('modificaIscrittiCheckboxes');
+    if (!container) return;
+    
+    try {
+        // Carica tutti gli iscritti
+        const iscritti = await fetchJSON('iscritti', 'GET');
+        
+        // Carica invitati attuali per questa prenotazione
+        const invitatiAttuali = await fetchJSON('invitati&prenotazione_id=' + prenotazioneId, 'GET');
+        const emailInvitati = invitatiAttuali.map(i => i.iscritto_email);
+        
+        let html = '';
+        iscritti.forEach(i => {
+            const checked = emailInvitati.includes(i.email) ? 'checked' : '';
+            html += `
+                <div class="form-check">
+                    <input class="form-check-input modifica-invitato-check" type="checkbox" value="${i.email}" id="mod_inv_${i.email.replace('@', '_')}" ${checked}>
+                    <label class="form-check-label" for="mod_inv_${i.email.replace('@', '_')}">
+                        ${i.nome} ${i.cognome} <small class="text-muted">(${i.ruolo})</small>
+                    </label>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = '<div class="alert alert-warning">Errore caricamento iscritti</div>';
+    }
+}
+
+/**
+ * Salva le modifiche a una prenotazione
+ */
+async function salvaModificaPrenotazione() {
+    const id = document.getElementById('modificaId').value;
+    const dataOraInizio = document.getElementById('modificaDataOra').value;
+    const durata = document.getElementById('modificaDurata').value;
+    const attivita = document.getElementById('modificaAttivita').value;
+    
+    // Raccogli invitati selezionati
+    const invitati = Array.from(document.querySelectorAll('.modifica-invitato-check:checked'))
+        .map(cb => cb.value);
+    
+    try {
+        await fetchJSON('prenotazioni', 'PUT', {
+            id: id,
+            data_ora_inizio: dataOraInizio,
+            durata: durata,
+            attivita: attivita,
+            invitati: invitati
+        });
+        
+        showAlert('Prenotazione modificata con successo!');
+        bootstrap.Modal.getInstance(document.getElementById('modificaPrenotazioneModal')).hide();
+        loadPrenotazioni();
+    } catch (error) {
+        showAlert(error.message, 'danger');
+    }
+}
+
 /**
  * Carica sale disponibili
  */
@@ -528,14 +685,12 @@ document.addEventListener('DOMContentLoaded', () => {
         salaFilter.addEventListener('change', () => loadPrenotazioni(salaFilter.value || null));
     }
     
-    // Forza minuti a 00 nel campo data/ora prenotazione
-    const dataOraInput = document.querySelector('input[name="data_ora_inizio"]');
-    if (dataOraInput) {
-        dataOraInput.addEventListener('change', function() {
+    // Forza minuti a 00 nei campi data/ora prenotazione
+    document.querySelectorAll('input[type="datetime-local"]').forEach(input => {
+        input.addEventListener('change', function() {
             if (this.value) {
-                // Rimuove i minuti impostando sempre :00
                 this.value = this.value.substring(0, 14) + '00';
             }
         });
-    }
+    });
 });

@@ -229,6 +229,7 @@ try {
                 $dataOraInizio = $data['data_ora_inizio'] ?? $prenotazione['data_ora_inizio'];
                 $durata = (int)($data['durata'] ?? $prenotazione['durata']);
                 $attivita = sanitize($data['attivita'] ?? $prenotazione['attivita']);
+                $invitati = $data['invitati'] ?? null;
                 
                 if (!validaOrarioPrenotazione($dataOraInizio)) {
                     jsonError('Le prenotazioni devono essere ad ore intere tra le 09:00 e le 23:00');
@@ -242,6 +243,24 @@ try {
                 $stmt = $pdo->prepare("UPDATE prenotazione SET data_ora_inizio = ?, durata = ?, attivita = ? WHERE id = ?");
                 $stmt->execute([$dataOraInizio, $durata, $attivita, $id]);
                 
+                // Aggiorna invitati se specificati
+                if ($invitati !== null) {
+                    // Rimuovi invitati non più selezionati (solo quelli in attesa)
+                    $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ? AND risposta = 'attesa' AND iscritto_email NOT IN (" . implode(',', array_fill(0, count($invitati) ?: 1, '?')) . ")")
+                        ->execute(array_merge([$id], $invitati ?: ['']));
+                    
+                    // Aggiungi nuovi invitati
+                    $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM invito WHERE iscritto_email = ? AND prenotazione_id = ?");
+                    $stmtInsert = $pdo->prepare("INSERT INTO invito (iscritto_email, prenotazione_id) VALUES (?, ?)");
+                    
+                    foreach ($invitati as $emailInvitato) {
+                        $stmtCheck->execute([sanitize($emailInvitato), $id]);
+                        if ($stmtCheck->fetchColumn() == 0) {
+                            $stmtInsert->execute([sanitize($emailInvitato), $id]);
+                        }
+                    }
+                }
+                
                 jsonSuccess(null);
                 
             } else {
@@ -251,6 +270,19 @@ try {
             
         /* ==================== INVITI ==================== */
         
+        case 'invitati':
+            // GET: lista invitati per una specifica prenotazione
+            if ($method === 'GET') {
+                $prenotazioneId = (int)($_GET['prenotazione_id'] ?? 0);
+                if (!$prenotazioneId) jsonError('ID prenotazione richiesto');
+                
+                $pdo = getDB();
+                $stmt = $pdo->prepare("SELECT * FROM invito WHERE prenotazione_id = ?");
+                $stmt->execute([$prenotazioneId]);
+                jsonSuccess($stmt->fetchAll(PDO::FETCH_ASSOC));
+            }
+            break;
+            
         case 'inviti':
             $user = requireLogin();
             
@@ -410,21 +442,48 @@ try {
             break;
             
         case 'profilo':
+            $user = requireLogin();
+            
             if ($method === 'PUT') {
-                $user = requireLogin();
+                // Modifica profilo
                 $data = json_decode(file_get_contents('php://input'), true);
                 
                 $nome = sanitize($data['nome'] ?? $user['nome']);
                 $cognome = sanitize($data['cognome'] ?? $user['cognome']);
+                $dataNascita = $data['data_nascita'] ?? $user['data_nascita'];
                 
                 $pdo = getDB();
-                $stmt = $pdo->prepare("UPDATE iscritto SET nome = ?, cognome = ? WHERE email = ?");
-                $stmt->execute([$nome, $cognome, $user['email']]);
+                $stmt = $pdo->prepare("UPDATE iscritto SET nome = ?, cognome = ?, data_nascita = ? WHERE email = ?");
+                $stmt->execute([$nome, $cognome, $dataNascita, $user['email']]);
                 
                 $_SESSION['user']['nome'] = $nome;
                 $_SESSION['user']['cognome'] = $cognome;
+                $_SESSION['user']['data_nascita'] = $dataNascita;
                 
                 jsonSuccess($_SESSION['user']);
+                
+            } elseif ($method === 'DELETE') {
+                // Cancella account
+                $pdo = getDB();
+                
+                // Elimina inviti dell'utente
+                $pdo->prepare("DELETE FROM invito WHERE iscritto_email = ?")->execute([$user['email']]);
+                
+                // Elimina prenotazioni create dall'utente (e relativi inviti)
+                $stmt = $pdo->prepare("SELECT id FROM prenotazione WHERE responsabile_email = ?");
+                $stmt->execute([$user['email']]);
+                $prenotazioni = $stmt->fetchAll(PDO::FETCH_COLUMN);
+                
+                foreach ($prenotazioni as $prenotazioneId) {
+                    $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ?")->execute([$prenotazioneId]);
+                }
+                $pdo->prepare("DELETE FROM prenotazione WHERE responsabile_email = ?")->execute([$user['email']]);
+                
+                // Elimina utente
+                $pdo->prepare("DELETE FROM iscritto WHERE email = ?")->execute([$user['email']]);
+                
+                session_destroy();
+                jsonSuccess(null);
             }
             break;
             
