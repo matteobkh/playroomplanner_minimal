@@ -1,178 +1,112 @@
 <?php
 /**
  * util.php - Funzioni di utilità condivise
- * Dipendenze: config.php (per getDB)
  */
 
 require_once __DIR__ . '/config.php';
 
-/* ==================== AUTENTICAZIONE ==================== */
+/* === AUTENTICAZIONE === */
 
-/**
- * Restituisce l'utente loggato o null
- */
+// Restituisce utente loggato o null
 function getLoggedUser(): ?array {
     return $_SESSION['user'] ?? null;
 }
 
-/**
- * Verifica se l'utente è loggato, altrimenti restituisce errore JSON
- */
+// Verifica login, altrimenti errore 401
 function requireLogin(): array {
     $user = getLoggedUser();
-    if (!$user) {
-        http_response_code(401);
-        echo json_encode(['ok' => false, 'error' => 'Accesso non autorizzato']);
-        exit;
-    }
+    if (!$user) jsonError('Accesso non autorizzato', 401);
     return $user;
 }
 
-/**
- * Verifica se l'utente è un responsabile (ha data_inizio_responsabile non null)
- */
+// Verifica se utente è responsabile (ha data_inizio_responsabile)
 function isResponsabile(?array $user): bool {
-    return $user && $user['ruolo'] === 'responsabile' && !empty($user['data_inizio_responsabile']);
+    return $user && $user['ruolo'] === 'responsabile' && $user['data_inizio_responsabile'];
 }
 
-/**
- * Richiede che l'utente sia un responsabile
- */
+// Richiede ruolo responsabile, altrimenti errore 403
 function requireResponsabile(): array {
     $user = requireLogin();
-    if (!isResponsabile($user)) {
-        http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'Solo i responsabili possono eseguire questa operazione']);
-        exit;
-    }
+    if (!isResponsabile($user)) jsonError('Riservato ai responsabili', 403);
     return $user;
 }
 
-/* ==================== RISPOSTE JSON ==================== */
+/* === RISPOSTE JSON === */
 
-/**
- * Risposta JSON standard di successo
- */
+// Risposta JSON successo
 function jsonSuccess($data = null): void {
     header('Content-Type: application/json');
-    echo json_encode(['ok' => true, 'data' => $data]);
-    exit;
+    die(json_encode(['ok' => true, 'data' => $data]));
 }
 
-/**
- * Risposta JSON standard di errore
- */
-function jsonError(string $message, int $code = 400): void {
+// Risposta JSON errore
+function jsonError(string $msg, int $code = 400): void {
     http_response_code($code);
     header('Content-Type: application/json');
-    echo json_encode(['ok' => false, 'error' => $message]);
-    exit;
+    die(json_encode(['ok' => false, 'error' => $msg]));
 }
 
-/* ==================== VALIDAZIONI ==================== */
+/* === VALIDAZIONI PRENOTAZIONI === */
 
-/**
- * Valida che l'orario di prenotazione sia ad ore intere tra 09:00 e 23:00
- */
-function validaOrarioPrenotazione(string $dataOraInizio): bool {
-    $dt = new DateTime($dataOraInizio);
-    $ora = (int)$dt->format('H');
-    $minuti = (int)$dt->format('i');
-    return $minuti === 0 && $ora >= 9 && $ora <= 23;
+// Verifica orario: ore intere, tra 9:00 e 23:00
+function validaOrario(string $dataOra): bool {
+    $dt = new DateTime($dataOra);
+    return $dt->format('i') === '00' && $dt->format('H') >= 9 && $dt->format('H') <= 23;
 }
 
-/**
- * Verifica sovrapposizione prenotazioni nella stessa sala
- */
-function esisteSovrapposizioneSala(int $salaId, string $dataOraInizio, int $durata, ?int $excludeId = null): bool {
-    $pdo = getDB();
-    $fine = (new DateTime($dataOraInizio))->modify("+{$durata} hours")->format('Y-m-d H:i:s');
-    
-    $sql = "SELECT COUNT(*) FROM prenotazione 
-            WHERE sala_id = ? 
-            AND data_ora_inizio < ? 
-            AND DATE_ADD(data_ora_inizio, INTERVAL durata HOUR) > ?";
-    $params = [$salaId, $fine, $dataOraInizio];
-    
-    if ($excludeId) {
-        $sql .= " AND id != ?";
-        $params[] = $excludeId;
-    }
-    
-    $stmt = $pdo->prepare($sql);
+// Verifica sovrapposizione sala (esclude prenotazione corrente se specificata)
+function sovrapposizioneSala(int $salaId, string $inizio, int $durata, ?int $excludeId = null): bool {
+    $fine = (new DateTime($inizio))->modify("+$durata hours")->format('Y-m-d H:i:s');
+    $sql = "SELECT 1 FROM prenotazione WHERE sala_id = ? AND data_ora_inizio < ? AND DATE_ADD(data_ora_inizio, INTERVAL durata HOUR) > ?";
+    $params = [$salaId, $fine, $inizio];
+    if ($excludeId) { $sql .= " AND id != ?"; $params[] = $excludeId; }
+    $stmt = getDB()->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchColumn() > 0;
+    return (bool)$stmt->fetch();
 }
 
-/**
- * Verifica sovrapposizione impegni per un utente
- */
-function esisteSovrapposizioneUtente(string $email, string $dataOraInizio, int $durata, ?int $excludePrenotazioneId = null): bool {
-    $pdo = getDB();
-    $fine = (new DateTime($dataOraInizio))->modify("+{$durata} hours")->format('Y-m-d H:i:s');
-    
-    $sql = "SELECT COUNT(*) FROM invito i
-            JOIN prenotazione p ON i.prenotazione_id = p.id
-            WHERE i.iscritto_email = ? 
-            AND i.risposta = 'si'
-            AND p.data_ora_inizio < ?
+// Verifica sovrapposizione impegni utente
+function sovrapposizioneUtente(string $email, string $inizio, int $durata, ?int $excludeId = null): bool {
+    $fine = (new DateTime($inizio))->modify("+$durata hours")->format('Y-m-d H:i:s');
+    $sql = "SELECT 1 FROM invito i JOIN prenotazione p ON i.prenotazione_id = p.id 
+            WHERE i.iscritto_email = ? AND i.risposta = 'si' AND p.data_ora_inizio < ? 
             AND DATE_ADD(p.data_ora_inizio, INTERVAL p.durata HOUR) > ?";
-    $params = [$email, $fine, $dataOraInizio];
-    
-    if ($excludePrenotazioneId) {
-        $sql .= " AND p.id != ?";
-        $params[] = $excludePrenotazioneId;
-    }
-    
-    $stmt = $pdo->prepare($sql);
+    $params = [$email, $fine, $inizio];
+    if ($excludeId) { $sql .= " AND p.id != ?"; $params[] = $excludeId; }
+    $stmt = getDB()->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchColumn() > 0;
+    return (bool)$stmt->fetch();
 }
 
-/**
- * Conta i partecipanti confermati per una prenotazione
- */
-function contaPartecipanti(int $prenotazioneId): int {
-    $pdo = getDB();
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM invito WHERE prenotazione_id = ? AND risposta = 'si'");
-    $stmt->execute([$prenotazioneId]);
+// Conta partecipanti confermati
+function contaPartecipanti(int $id): int {
+    $stmt = getDB()->prepare("SELECT COUNT(*) FROM invito WHERE prenotazione_id = ? AND risposta = 'si'");
+    $stmt->execute([$id]);
     return (int)$stmt->fetchColumn();
 }
 
-/**
- * Ottiene la capienza di una sala
- */
-function getCapienzaSala(int $salaId): int {
-    $pdo = getDB();
-    $stmt = $pdo->prepare("SELECT capienza FROM sala WHERE id = ?");
+// Ottiene capienza sala
+function getCapienza(int $salaId): int {
+    $stmt = getDB()->prepare("SELECT capienza FROM sala WHERE id = ?");
     $stmt->execute([$salaId]);
     return (int)$stmt->fetchColumn();
 }
 
-/**
- * Ottiene i dettagli di una prenotazione
- */
+// Ottiene prenotazione per ID
 function getPrenotazione(int $id): ?array {
-    $pdo = getDB();
-    $stmt = $pdo->prepare("SELECT * FROM prenotazione WHERE id = ?");
+    $stmt = getDB()->prepare("SELECT * FROM prenotazione WHERE id = ?");
     $stmt->execute([$id]);
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $result ?: null;
+    return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
-/**
- * Ottiene il lunedì della settimana che contiene la data specificata
- */
-function getLunediSettimana(string $data): string {
+// Calcola lunedì della settimana
+function getLunedi(string $data): string {
     $dt = new DateTime($data);
-    $dayOfWeek = (int)$dt->format('N');
-    $dt->modify('-' . ($dayOfWeek - 1) . ' days');
+    $dt->modify('monday this week');
     return $dt->format('Y-m-d');
 }
 
-/**
- * Input sanitization
- */
-function sanitize($value): string {
-    return htmlspecialchars(trim($value ?? ''), ENT_QUOTES, 'UTF-8');
+// Sanitizza input
+function sanitize($v): string {
+    return htmlspecialchars(trim($v ?? ''), ENT_QUOTES, 'UTF-8');
 }

@@ -1,126 +1,87 @@
 <?php
 /**
- * api.php - API centralizzata per Play Room Planner
- * Gestisce tutte le operazioni tramite routing interno
- * Dipendenze: common/util.php
+ * api.php - API REST centralizzata
+ * Gestisce: login, registrazione, prenotazioni, inviti, profilo
  */
 
 require_once __DIR__ . '/common/util.php';
 
 header('Content-Type: application/json');
 
-// Routing basato su metodo e action
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
+$pdo = getDB();
 
 try {
     switch ($action) {
-        
-        /* ==================== AUTH ==================== */
-        
+
+        /* === AUTENTICAZIONE === */
+
         case 'login':
-            if ($method !== 'POST') jsonError('Metodo non consentito', 405);
+            // Verifica credenziali e crea sessione
             $data = json_decode(file_get_contents('php://input'), true);
-            $email = sanitize($data['email'] ?? '');
-            $password = $data['password'] ?? '';
-            
-            if (empty($email) || empty($password)) {
-                jsonError('Email e password richiesti');
-            }
-            
-            $pdo = getDB();
             $stmt = $pdo->prepare("SELECT * FROM iscritto WHERE email = ?");
-            $stmt->execute([$email]);
+            $stmt->execute([sanitize($data['email'] ?? '')]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
             
-            if (!$user || $password !== $user['password']) {
+            if (!$user || ($data['password'] ?? '') !== $user['password']) {
                 jsonError('Credenziali non valide', 401);
             }
-            
             unset($user['password']);
             $_SESSION['user'] = $user;
             jsonSuccess($user);
-            break;
-            
+
         case 'register':
-            if ($method !== 'POST') jsonError('Metodo non consentito', 405);
+            // Registra nuovo utente
             $data = json_decode(file_get_contents('php://input'), true);
-            
             $email = sanitize($data['email'] ?? '');
             $nome = sanitize($data['nome'] ?? '');
             $cognome = sanitize($data['cognome'] ?? '');
             $password = $data['password'] ?? '';
-            $dataNascita = $data['data_nascita'] ?? '';
+            $nascita = $data['data_nascita'] ?? '';
             $ruolo = $data['ruolo'] ?? 'allievo';
             
-            if (empty($email) || empty($nome) || empty($cognome) || empty($password) || empty($dataNascita)) {
+            if (!$email || !$nome || !$cognome || !$password || !$nascita) {
                 jsonError('Tutti i campi sono obbligatori');
             }
             
-            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                jsonError('Email non valida');
-            }
-            
-            if (!in_array($ruolo, ['docente', 'allievo', 'tecnico', 'responsabile'])) {
-                jsonError('Ruolo non valido');
-            }
-            
-            $dataInizioResp = ($ruolo === 'responsabile') ? date('Y-m-d') : null;
-            
-            $pdo = getDB();
-            
-            // Verifica email esistente
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM iscritto WHERE email = ?");
+            // Verifica email unica
+            $stmt = $pdo->prepare("SELECT 1 FROM iscritto WHERE email = ?");
             $stmt->execute([$email]);
-            if ($stmt->fetchColumn() > 0) {
-                jsonError('Email già registrata');
-            }
+            if ($stmt->fetch()) jsonError('Email già registrata');
+            
+            // Data inizio responsabile solo se ruolo = responsabile
+            $dataResp = ($ruolo === 'responsabile') ? date('Y-m-d') : null;
             
             $stmt = $pdo->prepare("INSERT INTO iscritto (email, nome, cognome, password, data_nascita, ruolo, data_inizio_responsabile) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$email, $nome, $cognome, $password, $dataNascita, $ruolo, $dataInizioResp]);
-            
-            jsonSuccess(['email' => $email, 'nome' => $nome, 'cognome' => $cognome]);
-            break;
-            
-        case 'user':
-            if ($method !== 'GET') jsonError('Metodo non consentito', 405);
-            $user = getLoggedUser();
-            if (!$user) jsonError('Non autenticato', 401);
-            jsonSuccess($user);
-            break;
-            
+            $stmt->execute([$email, $nome, $cognome, $password, $nascita, $ruolo, $dataResp]);
+            jsonSuccess(['email' => $email]);
+
         case 'logout':
-            if ($method !== 'POST') jsonError('Metodo non consentito', 405);
+            // Distrugge sessione
             session_destroy();
             jsonSuccess(null);
-            break;
-            
-        /* ==================== PRENOTAZIONI ==================== */
-        
+
+        case 'user':
+            // Restituisce utente loggato
+            jsonSuccess(getLoggedUser());
+
+        /* === PRENOTAZIONI === */
+
         case 'prenotazioni':
             if ($method === 'GET') {
-                // Visualizza prenotazioni per sala e settimana
-                $salaId = isset($_GET['sala_id']) ? (int)$_GET['sala_id'] : null;
-                $week = $_GET['week'] ?? date('Y-m-d');
-                
-                $lunedi = getLunediSettimana($week);
+                // Lista prenotazioni settimanali, filtrabile per sala
+                $salaId = $_GET['sala_id'] ?? null;
+                $lunedi = getLunedi($_GET['week'] ?? date('Y-m-d'));
                 $domenica = (new DateTime($lunedi))->modify('+6 days')->format('Y-m-d');
                 
-                $pdo = getDB();
-                
-                $sql = "SELECT p.*, s.nome_sala, s.nome_settore, s.capienza,
-                        i.nome AS resp_nome, i.cognome AS resp_cognome
+                $sql = "SELECT p.*, s.nome_sala, s.nome_settore, s.capienza, i.nome AS resp_nome, i.cognome AS resp_cognome
                         FROM prenotazione p
                         JOIN sala s ON p.sala_id = s.id
                         JOIN iscritto i ON p.responsabile_email = i.email
                         WHERE DATE(p.data_ora_inizio) BETWEEN ? AND ?";
                 $params = [$lunedi, $domenica];
-                
-                if ($salaId) {
-                    $sql .= " AND p.sala_id = ?";
-                    $params[] = $salaId;
-                }
-                
+                if ($salaId) { $sql .= " AND p.sala_id = ?"; $params[] = $salaId; }
                 $sql .= " ORDER BY p.data_ora_inizio";
                 
                 $stmt = $pdo->prepare($sql);
@@ -128,371 +89,221 @@ try {
                 $prenotazioni = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 
                 // Aggiungi conteggio partecipanti
-                foreach ($prenotazioni as &$p) {
-                    $p['num_partecipanti'] = contaPartecipanti($p['id']);
-                }
+                foreach ($prenotazioni as &$p) $p['num_partecipanti'] = contaPartecipanti($p['id']);
                 
                 jsonSuccess(['prenotazioni' => $prenotazioni, 'settimana_inizio' => $lunedi]);
-                
-            } elseif ($method === 'POST') {
+            }
+            
+            if ($method === 'POST') {
                 // Crea nuova prenotazione (solo responsabili)
                 $user = requireResponsabile();
                 $data = json_decode(file_get_contents('php://input'), true);
                 
                 $salaId = (int)($data['sala_id'] ?? 0);
-                $dataOraInizio = $data['data_ora_inizio'] ?? '';
+                $inizio = $data['data_ora_inizio'] ?? '';
                 $durata = (int)($data['durata'] ?? 0);
                 $attivita = sanitize($data['attivita'] ?? '');
-                $criterio = $data['criterio'] ?? 'selezione';
-                $invitati = $data['invitati'] ?? []; // array di email
+                $invitati = $data['invitati'] ?? [];
                 
-                if (!$salaId || empty($dataOraInizio) || $durata <= 0 || empty($attivita)) {
-                    jsonError('Tutti i campi sono obbligatori');
-                }
+                if (!$salaId || !$inizio || $durata <= 0 || !$attivita) jsonError('Campi obbligatori mancanti');
+                if (!validaOrario($inizio)) jsonError('Orario non valido (ore intere, 9-23)');
+                if (sovrapposizioneSala($salaId, $inizio, $durata)) jsonError('Sala già occupata');
                 
-                // Validazione orario
-                if (!validaOrarioPrenotazione($dataOraInizio)) {
-                    jsonError('Le prenotazioni devono essere ad ore intere tra le 09:00 e le 23:00');
-                }
-                
-                // Verifica fine entro le 24:00
-                $oraInizio = (int)(new DateTime($dataOraInizio))->format('H');
-                if ($oraInizio + $durata > 24) {
-                    jsonError('La prenotazione deve terminare entro le 24:00');
-                }
-                
-                // Verifica sala esiste e ottieni settore
-                $pdo = getDB();
-                $stmt = $pdo->prepare("SELECT * FROM sala WHERE id = ?");
+                // Ottieni settore dalla sala
+                $stmt = $pdo->prepare("SELECT nome_settore FROM sala WHERE id = ?");
                 $stmt->execute([$salaId]);
-                $sala = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if (!$sala) {
-                    jsonError('Sala non trovata');
-                }
-                
-                // Verifica sovrapposizione sala
-                if (esisteSovrapposizioneSala($salaId, $dataOraInizio, $durata)) {
-                    jsonError('La sala è già occupata in questo orario');
-                }
+                $settore = $stmt->fetchColumn();
+                if (!$settore) jsonError('Sala non trovata');
                 
                 // Inserisci prenotazione
-                $stmt = $pdo->prepare("INSERT INTO prenotazione (data_ora_inizio, durata, attivita, criterio, nome_settore, sala_id, responsabile_email) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$dataOraInizio, $durata, $attivita, $criterio, $sala['nome_settore'], $salaId, $user['email']]);
-                $prenotazioneId = $pdo->lastInsertId();
+                $stmt = $pdo->prepare("INSERT INTO prenotazione (data_ora_inizio, durata, attivita, nome_settore, sala_id, responsabile_email) VALUES (?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$inizio, $durata, $attivita, $settore, $salaId, $user['email']]);
+                $id = $pdo->lastInsertId();
                 
-                // Crea inviti se specificati
-                if (!empty($invitati)) {
-                    $stmtInvito = $pdo->prepare("INSERT INTO invito (iscritto_email, prenotazione_id) VALUES (?, ?)");
-                    foreach ($invitati as $emailInvitato) {
-                        $stmtInvito->execute([sanitize($emailInvitato), $prenotazioneId]);
-                    }
+                // Crea inviti
+                if ($invitati) {
+                    $stmt = $pdo->prepare("INSERT INTO invito (iscritto_email, prenotazione_id) VALUES (?, ?)");
+                    foreach ($invitati as $email) $stmt->execute([sanitize($email), $id]);
                 }
-                
-                jsonSuccess(['id' => $prenotazioneId]);
-                
-            } elseif ($method === 'DELETE') {
-                // Cancella prenotazione
-                $user = requireResponsabile();
-                $id = (int)($_GET['id'] ?? 0);
-                
-                if (!$id) jsonError('ID prenotazione richiesto');
-                
-                $prenotazione = getPrenotazione($id);
-                if (!$prenotazione) jsonError('Prenotazione non trovata');
-                
-                if ($prenotazione['responsabile_email'] !== $user['email']) {
-                    jsonError('Puoi cancellare solo le tue prenotazioni', 403);
-                }
-                
-                $pdo = getDB();
-                $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ?")->execute([$id]);
-                $pdo->prepare("DELETE FROM prenotazione WHERE id = ?")->execute([$id]);
-                
-                jsonSuccess(null);
-                
-            } elseif ($method === 'PUT') {
-                // Modifica prenotazione
+                jsonSuccess(['id' => $id]);
+            }
+            
+            if ($method === 'PUT') {
+                // Modifica prenotazione (solo proprietario)
                 $user = requireResponsabile();
                 $data = json_decode(file_get_contents('php://input'), true);
                 $id = (int)($data['id'] ?? 0);
                 
-                if (!$id) jsonError('ID prenotazione richiesto');
+                $p = getPrenotazione($id);
+                if (!$p) jsonError('Prenotazione non trovata');
+                if ($p['responsabile_email'] !== $user['email']) jsonError('Non autorizzato', 403);
                 
-                $prenotazione = getPrenotazione($id);
-                if (!$prenotazione) jsonError('Prenotazione non trovata');
-                
-                if ($prenotazione['responsabile_email'] !== $user['email']) {
-                    jsonError('Puoi modificare solo le tue prenotazioni', 403);
-                }
-                
-                $dataOraInizio = $data['data_ora_inizio'] ?? $prenotazione['data_ora_inizio'];
-                $durata = (int)($data['durata'] ?? $prenotazione['durata']);
-                $attivita = sanitize($data['attivita'] ?? $prenotazione['attivita']);
+                $inizio = $data['data_ora_inizio'] ?? $p['data_ora_inizio'];
+                $durata = (int)($data['durata'] ?? $p['durata']);
+                $attivita = sanitize($data['attivita'] ?? $p['attivita']);
                 $invitati = $data['invitati'] ?? null;
                 
-                if (!validaOrarioPrenotazione($dataOraInizio)) {
-                    jsonError('Le prenotazioni devono essere ad ore intere tra le 09:00 e le 23:00');
-                }
+                if (!validaOrario($inizio)) jsonError('Orario non valido');
+                if (sovrapposizioneSala($p['sala_id'], $inizio, $durata, $id)) jsonError('Sala già occupata');
                 
-                if (esisteSovrapposizioneSala($prenotazione['sala_id'], $dataOraInizio, $durata, $id)) {
-                    jsonError('La sala è già occupata in questo orario');
-                }
-                
-                $pdo = getDB();
+                // Aggiorna prenotazione
                 $stmt = $pdo->prepare("UPDATE prenotazione SET data_ora_inizio = ?, durata = ?, attivita = ? WHERE id = ?");
-                $stmt->execute([$dataOraInizio, $durata, $attivita, $id]);
+                $stmt->execute([$inizio, $durata, $attivita, $id]);
                 
                 // Aggiorna invitati se specificati
                 if ($invitati !== null) {
-                    // Rimuovi invitati non più selezionati (solo quelli in attesa)
-                    $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ? AND risposta = 'attesa' AND iscritto_email NOT IN (" . implode(',', array_fill(0, count($invitati) ?: 1, '?')) . ")")
-                        ->execute(array_merge([$id], $invitati ?: ['']));
+                    // Rimuovi inviti in attesa non più selezionati
+                    $placeholders = $invitati ? implode(',', array_fill(0, count($invitati), '?')) : "''";
+                    $stmt = $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ? AND risposta = 'attesa' AND iscritto_email NOT IN ($placeholders)");
+                    $stmt->execute(array_merge([$id], $invitati));
                     
-                    // Aggiungi nuovi invitati
-                    $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM invito WHERE iscritto_email = ? AND prenotazione_id = ?");
-                    $stmtInsert = $pdo->prepare("INSERT INTO invito (iscritto_email, prenotazione_id) VALUES (?, ?)");
-                    
-                    foreach ($invitati as $emailInvitato) {
-                        $stmtCheck->execute([sanitize($emailInvitato), $id]);
-                        if ($stmtCheck->fetchColumn() == 0) {
-                            $stmtInsert->execute([sanitize($emailInvitato), $id]);
-                        }
+                    // Aggiungi nuovi inviti
+                    $stmtCheck = $pdo->prepare("SELECT 1 FROM invito WHERE iscritto_email = ? AND prenotazione_id = ?");
+                    $stmtIns = $pdo->prepare("INSERT INTO invito (iscritto_email, prenotazione_id) VALUES (?, ?)");
+                    foreach ($invitati as $email) {
+                        $stmtCheck->execute([sanitize($email), $id]);
+                        if (!$stmtCheck->fetch()) $stmtIns->execute([sanitize($email), $id]);
                     }
                 }
-                
                 jsonSuccess(null);
+            }
+            
+            if ($method === 'DELETE') {
+                // Cancella prenotazione (solo proprietario)
+                $user = requireResponsabile();
+                $id = (int)($_GET['id'] ?? 0);
                 
-            } else {
-                jsonError('Metodo non consentito', 405);
+                $p = getPrenotazione($id);
+                if (!$p) jsonError('Prenotazione non trovata');
+                if ($p['responsabile_email'] !== $user['email']) jsonError('Non autorizzato', 403);
+                
+                $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ?")->execute([$id]);
+                $pdo->prepare("DELETE FROM prenotazione WHERE id = ?")->execute([$id]);
+                jsonSuccess(null);
             }
             break;
-            
-        /* ==================== INVITI ==================== */
-        
+
+        /* === INVITI === */
+
         case 'invitati':
-            // GET: lista invitati per una specifica prenotazione
-            if ($method === 'GET') {
-                $prenotazioneId = (int)($_GET['prenotazione_id'] ?? 0);
-                if (!$prenotazioneId) jsonError('ID prenotazione richiesto');
-                
-                $pdo = getDB();
-                $stmt = $pdo->prepare("SELECT * FROM invito WHERE prenotazione_id = ?");
-                $stmt->execute([$prenotazioneId]);
-                jsonSuccess($stmt->fetchAll(PDO::FETCH_ASSOC));
-            }
-            break;
-            
+            // Lista invitati di una prenotazione
+            $id = (int)($_GET['prenotazione_id'] ?? 0);
+            $stmt = $pdo->prepare("SELECT * FROM invito WHERE prenotazione_id = ?");
+            $stmt->execute([$id]);
+            jsonSuccess($stmt->fetchAll(PDO::FETCH_ASSOC));
+
         case 'inviti':
+            // Lista inviti dell'utente loggato (futuri)
             $user = requireLogin();
-            
-            if ($method === 'GET') {
-                // Lista inviti per l'utente loggato
-                $pdo = getDB();
-                $stmt = $pdo->prepare("
-                    SELECT i.*, p.data_ora_inizio, p.durata, p.attivita, 
-                           s.nome_sala, s.nome_settore, s.capienza,
-                           r.nome AS resp_nome, r.cognome AS resp_cognome
-                    FROM invito i
-                    JOIN prenotazione p ON i.prenotazione_id = p.id
-                    JOIN sala s ON p.sala_id = s.id
-                    JOIN iscritto r ON p.responsabile_email = r.email
-                    WHERE i.iscritto_email = ?
-                    AND p.data_ora_inizio >= NOW()
-                    ORDER BY p.data_ora_inizio
-                ");
-                $stmt->execute([$user['email']]);
-                $inviti = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                
-                foreach ($inviti as &$inv) {
-                    $inv['num_partecipanti'] = contaPartecipanti($inv['prenotazione_id']);
-                }
-                
-                jsonSuccess($inviti);
-            }
-            break;
-            
-        case 'inviti/rispondi':
-            if ($method !== 'POST') jsonError('Metodo non consentito', 405);
-            $user = requireLogin();
-            $data = json_decode(file_get_contents('php://input'), true);
-            
-            $prenotazioneId = (int)($data['prenotazione_id'] ?? 0);
-            $risposta = $data['risposta'] ?? '';
-            $motivazione = sanitize($data['motivazione'] ?? '');
-            
-            if (!$prenotazioneId || !in_array($risposta, ['si', 'no'])) {
-                jsonError('Dati non validi');
-            }
-            
-            // Rifiuto richiede motivazione
-            if ($risposta === 'no' && empty($motivazione)) {
-                jsonError('La motivazione è obbligatoria per rifiutare un invito');
-            }
-            
-            $prenotazione = getPrenotazione($prenotazioneId);
-            if (!$prenotazione) jsonError('Prenotazione non trovata');
-            
-            // Verifica invito esiste
-            $pdo = getDB();
-            $stmt = $pdo->prepare("SELECT * FROM invito WHERE iscritto_email = ? AND prenotazione_id = ?");
-            $stmt->execute([$user['email'], $prenotazioneId]);
-            $invito = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$invito) jsonError('Invito non trovato');
-            
-            if ($risposta === 'si') {
-                // Verifica capienza
-                $partecipanti = contaPartecipanti($prenotazioneId);
-                $capienza = getCapienzaSala($prenotazione['sala_id']);
-                
-                if ($partecipanti >= $capienza) {
-                    jsonError('Posti esauriti per questa prenotazione');
-                }
-                
-                // Verifica sovrapposizione impegni utente
-                if (esisteSovrapposizioneUtente($user['email'], $prenotazione['data_ora_inizio'], $prenotazione['durata'], $prenotazioneId)) {
-                    jsonError('Hai già un impegno in questo orario');
-                }
-            }
-            
-            $stmt = $pdo->prepare("UPDATE invito SET risposta = ?, motivazione = ?, data_ora_risposta = NOW() WHERE iscritto_email = ? AND prenotazione_id = ?");
-            $stmt->execute([$risposta, $motivazione ?: null, $user['email'], $prenotazioneId]);
-            
-            jsonSuccess(null);
-            break;
-            
-        case 'inviti/rimuovi':
-            if ($method !== 'POST') jsonError('Metodo non consentito', 405);
-            $user = requireLogin();
-            $data = json_decode(file_get_contents('php://input'), true);
-            $prenotazioneId = (int)($data['prenotazione_id'] ?? 0);
-            
-            if (!$prenotazioneId) jsonError('ID prenotazione richiesto');
-            
-            $pdo = getDB();
-            $stmt = $pdo->prepare("UPDATE invito SET risposta = 'attesa', motivazione = NULL, data_ora_risposta = NULL WHERE iscritto_email = ? AND prenotazione_id = ?");
-            $stmt->execute([$user['email'], $prenotazioneId]);
-            
-            jsonSuccess(null);
-            break;
-            
-        /* ==================== IMPEGNI UTENTE ==================== */
-        
-        case 'impegni':
-            $user = requireLogin();
-            $week = $_GET['week'] ?? date('Y-m-d');
-            
-            $lunedi = getLunediSettimana($week);
-            $domenica = (new DateTime($lunedi))->modify('+6 days')->format('Y-m-d');
-            
-            $pdo = getDB();
             $stmt = $pdo->prepare("
-                SELECT p.*, s.nome_sala, s.nome_settore,
-                       r.nome AS resp_nome, r.cognome AS resp_cognome
+                SELECT i.*, p.data_ora_inizio, p.durata, p.attivita, s.nome_sala, s.nome_settore, s.capienza, r.nome AS resp_nome, r.cognome AS resp_cognome
                 FROM invito i
                 JOIN prenotazione p ON i.prenotazione_id = p.id
                 JOIN sala s ON p.sala_id = s.id
                 JOIN iscritto r ON p.responsabile_email = r.email
-                WHERE i.iscritto_email = ?
-                AND i.risposta = 'si'
-                AND DATE(p.data_ora_inizio) BETWEEN ? AND ?
-                ORDER BY p.data_ora_inizio
-            ");
+                WHERE i.iscritto_email = ? AND p.data_ora_inizio >= NOW()
+                ORDER BY p.data_ora_inizio");
+            $stmt->execute([$user['email']]);
+            $inviti = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($inviti as &$inv) $inv['num_partecipanti'] = contaPartecipanti($inv['prenotazione_id']);
+            jsonSuccess($inviti);
+
+        case 'inviti/rispondi':
+            // Accetta o rifiuta invito
+            $user = requireLogin();
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['prenotazione_id'] ?? 0);
+            $risposta = $data['risposta'] ?? '';
+            $motivazione = sanitize($data['motivazione'] ?? '');
+            
+            if (!in_array($risposta, ['si', 'no'])) jsonError('Risposta non valida');
+            if ($risposta === 'no' && !$motivazione) jsonError('Motivazione obbligatoria per rifiuto');
+            
+            $p = getPrenotazione($id);
+            if (!$p) jsonError('Prenotazione non trovata');
+            
+            if ($risposta === 'si') {
+                if (contaPartecipanti($id) >= getCapienza($p['sala_id'])) jsonError('Posti esauriti');
+                if (sovrapposizioneUtente($user['email'], $p['data_ora_inizio'], $p['durata'], $id)) jsonError('Hai già un impegno');
+            }
+            
+            $stmt = $pdo->prepare("UPDATE invito SET risposta = ?, motivazione = ?, data_ora_risposta = NOW() WHERE iscritto_email = ? AND prenotazione_id = ?");
+            $stmt->execute([$risposta, $motivazione ?: null, $user['email'], $id]);
+            jsonSuccess(null);
+
+        case 'inviti/rimuovi':
+            // Rimuovi partecipazione (reimposta a 'attesa')
+            $user = requireLogin();
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = (int)($data['prenotazione_id'] ?? 0);
+            $stmt = $pdo->prepare("UPDATE invito SET risposta = 'attesa', motivazione = NULL, data_ora_risposta = NULL WHERE iscritto_email = ? AND prenotazione_id = ?");
+            $stmt->execute([$user['email'], $id]);
+            jsonSuccess(null);
+
+        /* === IMPEGNI === */
+
+        case 'impegni':
+            // Lista impegni confermati dell'utente per settimana
+            $user = requireLogin();
+            $lunedi = getLunedi($_GET['week'] ?? date('Y-m-d'));
+            $domenica = (new DateTime($lunedi))->modify('+6 days')->format('Y-m-d');
+            
+            $stmt = $pdo->prepare("
+                SELECT p.*, s.nome_sala, s.nome_settore, r.nome AS resp_nome, r.cognome AS resp_cognome
+                FROM invito i
+                JOIN prenotazione p ON i.prenotazione_id = p.id
+                JOIN sala s ON p.sala_id = s.id
+                JOIN iscritto r ON p.responsabile_email = r.email
+                WHERE i.iscritto_email = ? AND i.risposta = 'si' AND DATE(p.data_ora_inizio) BETWEEN ? AND ?
+                ORDER BY p.data_ora_inizio");
             $stmt->execute([$user['email'], $lunedi, $domenica]);
-            
             jsonSuccess(['impegni' => $stmt->fetchAll(PDO::FETCH_ASSOC), 'settimana_inizio' => $lunedi]);
-            break;
-            
-        /* ==================== DATI AUSILIARI ==================== */
-        
+
+        /* === DATI AUSILIARI === */
+
         case 'sale':
-            $pdo = getDB();
-            $stmt = $pdo->query("SELECT s.*, se.responsabile_email FROM sala s JOIN settore se ON s.nome_settore = se.nome_settore ORDER BY s.nome_settore, s.nome_sala");
+            // Lista tutte le sale
+            $stmt = $pdo->query("SELECT * FROM sala ORDER BY nome_settore, nome_sala");
             jsonSuccess($stmt->fetchAll(PDO::FETCH_ASSOC));
-            break;
-            
-        case 'settori':
-            $pdo = getDB();
-            $stmt = $pdo->query("SELECT * FROM settore ORDER BY nome_settore");
-            jsonSuccess($stmt->fetchAll(PDO::FETCH_ASSOC));
-            break;
-            
+
         case 'iscritti':
-            $pdo = getDB();
-            $settore = $_GET['settore'] ?? null;
-            $ruolo = $_GET['ruolo'] ?? null;
-            
-            $sql = "SELECT email, nome, cognome, ruolo FROM iscritto WHERE 1=1";
-            $params = [];
-            
-            if ($settore) {
-                // Per filtrare per settore, usiamo il settore del responsabile della prenotazione
-                // Qui assumiamo che gli iscritti possano appartenere a più settori tramite inviti
-            }
-            if ($ruolo) {
-                $sql .= " AND ruolo = ?";
-                $params[] = $ruolo;
-            }
-            
-            $sql .= " ORDER BY cognome, nome";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
+            // Lista tutti gli iscritti
+            $stmt = $pdo->query("SELECT email, nome, cognome, ruolo FROM iscritto ORDER BY cognome, nome");
             jsonSuccess($stmt->fetchAll(PDO::FETCH_ASSOC));
-            break;
-            
+
+        /* === PROFILO === */
+
         case 'profilo':
             $user = requireLogin();
             
             if ($method === 'PUT') {
-                // Modifica profilo
+                // Modifica dati profilo
                 $data = json_decode(file_get_contents('php://input'), true);
-                
                 $nome = sanitize($data['nome'] ?? $user['nome']);
                 $cognome = sanitize($data['cognome'] ?? $user['cognome']);
-                $dataNascita = $data['data_nascita'] ?? $user['data_nascita'];
+                $nascita = $data['data_nascita'] ?? $user['data_nascita'];
                 
-                $pdo = getDB();
                 $stmt = $pdo->prepare("UPDATE iscritto SET nome = ?, cognome = ?, data_nascita = ? WHERE email = ?");
-                $stmt->execute([$nome, $cognome, $dataNascita, $user['email']]);
+                $stmt->execute([$nome, $cognome, $nascita, $user['email']]);
                 
-                $_SESSION['user']['nome'] = $nome;
-                $_SESSION['user']['cognome'] = $cognome;
-                $_SESSION['user']['data_nascita'] = $dataNascita;
-                
+                $_SESSION['user'] = array_merge($user, compact('nome', 'cognome') + ['data_nascita' => $nascita]);
                 jsonSuccess($_SESSION['user']);
-                
-            } elseif ($method === 'DELETE') {
-                // Cancella account
-                $pdo = getDB();
-                
-                // Elimina inviti dell'utente
+            }
+            
+            if ($method === 'DELETE') {
+                // Cancella account e tutti i dati associati
                 $pdo->prepare("DELETE FROM invito WHERE iscritto_email = ?")->execute([$user['email']]);
-                
-                // Elimina prenotazioni create dall'utente (e relativi inviti)
-                $stmt = $pdo->prepare("SELECT id FROM prenotazione WHERE responsabile_email = ?");
-                $stmt->execute([$user['email']]);
-                $prenotazioni = $stmt->fetchAll(PDO::FETCH_COLUMN);
-                
-                foreach ($prenotazioni as $prenotazioneId) {
-                    $pdo->prepare("DELETE FROM invito WHERE prenotazione_id = ?")->execute([$prenotazioneId]);
-                }
+                $pdo->prepare("DELETE FROM invito WHERE prenotazione_id IN (SELECT id FROM prenotazione WHERE responsabile_email = ?)")->execute([$user['email']]);
                 $pdo->prepare("DELETE FROM prenotazione WHERE responsabile_email = ?")->execute([$user['email']]);
-                
-                // Elimina utente
                 $pdo->prepare("DELETE FROM iscritto WHERE email = ?")->execute([$user['email']]);
-                
                 session_destroy();
                 jsonSuccess(null);
             }
             break;
-            
+
         default:
             jsonError('Azione non trovata', 404);
     }
-    
-} catch (PDOException $e) {
-    jsonError('Errore database: ' . $e->getMessage(), 500);
 } catch (Exception $e) {
     jsonError('Errore: ' . $e->getMessage(), 500);
 }

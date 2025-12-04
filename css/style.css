@@ -1,100 +1,30 @@
-/**
- * style.css - Stili personalizzati Play Room Planner
- */
+/* Stili Play Room Planner */
 
-:root {
-    --primary-color: #0d6efd;
-    --success-color: #198754;
-    --warning-color: #ffc107;
-    --danger-color: #dc3545;
-}
+body { min-height: 100vh; display: flex; flex-direction: column; background: #f8f9fa; }
+main { flex: 1; }
 
-body {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background-color: #f8f9fa;
-}
-
-main {
-    flex: 1;
-}
-
-/* Card prenotazioni */
-.prenotazione-card {
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.prenotazione-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
+/* Card prenotazioni con hover */
+.prenotazione-card { transition: transform 0.2s; }
+.prenotazione-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 
 /* Badge stati invito */
-.badge-attesa { background-color: #6c757d; }
-.badge-si { background-color: var(--success-color); }
-.badge-no { background-color: var(--danger-color); }
+.badge-attesa { background: #6c757d; }
+.badge-si { background: #198754; }
+.badge-no { background: #dc3545; }
 
-/* Calendario settimanale */
-.week-nav {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
+/* Navigazione settimana */
+.week-nav { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 
-.week-nav .btn {
-    min-width: 100px;
-}
+/* Form section */
+.form-section { background: white; padding: 1.5rem; border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; }
 
-/* Form */
-.form-section {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 0.5rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    margin-bottom: 1.5rem;
-}
+/* Alert container fisso */
+#alertContainer { position: fixed; top: 80px; right: 20px; z-index: 1050; max-width: 400px; }
 
-/* Alert messaggi */
-#alertContainer {
-    position: fixed;
-    top: 80px;
-    right: 20px;
-    z-index: 1050;
-    max-width: 400px;
-}
+/* Sezioni con scroll margin */
+section { scroll-margin-top: 80px; }
+section h3 { border-bottom: 2px solid #0d6efd; padding-bottom: 0.5rem; margin-bottom: 1rem; }
 
-/* Tabella responsive */
-.table-responsive {
-    border-radius: 0.5rem;
-    overflow: hidden;
-}
-
-/* Loading spinner */
-.loading {
-    display: flex;
-    justify-content: center;
-    padding: 2rem;
-}
-
-/* Sezioni principali */
-section {
-    scroll-margin-top: 80px;
-}
-
-section h3 {
-    border-bottom: 2px solid var(--primary-color);
-    padding-bottom: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-/* Modal */
-.modal-header {
-    background: linear-gradient(135deg, var(--primary-color), #0056b3);
-    color: white;
-}
-
-.modal-header .btn-close {
-    filter: brightness(0) invert(1);
-}
+/* Modal header colorato */
+.modal-header { background: linear-gradient(135deg, #0d6efd, #0056b3); color: white; }
+.modal-header .btn-close { filter: brightness(0) invert(1); }
