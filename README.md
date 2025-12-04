@@ -66,7 +66,7 @@ playroomplanner/
 ## Funzionalità Implementate
 
 ### Autenticazione
-- Login con email e password (hash bcrypt)
+- Login con email e password
 - Registrazione nuovi utenti
 - Logout con distruzione sessione
 - Visualizzazione profilo utente
